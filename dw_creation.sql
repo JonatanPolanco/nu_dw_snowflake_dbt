@@ -135,8 +135,7 @@ AUTO_REFRESH = FALSE;
 -- d_month
 CREATE OR REPLACE EXTERNAL TABLE d_month (
     month_id INT AS (VALUE:c1::INT),
-    month_name STRING AS (VALUE:c2::STRING),
-    month_number INT AS (VALUE:c3::INT)
+    action_month BIGINT AS (VALUE:c2::BIGINT)
 )
 LOCATION = @nu_dataset_stage/d_month/
 PATTERN = '.*\\.csv'
@@ -146,10 +145,13 @@ AUTO_REFRESH = FALSE;
 
 -- d_time
 CREATE OR REPLACE EXTERNAL TABLE d_time (
-    time_id INT AS (VALUE:c1::INT),
-    hour INT AS (VALUE:c2::INT),
-    minute INT AS (VALUE:c3::INT),
-    second INT AS (VALUE:c4::INT)
+    time_id BIGINT AS (VALUE:c1::BIGINT),
+    action_timestamp STRING AS (VALUE:c2::STRING),
+    week_id INT AS (VALUE:c3::INT),
+    month_id INT AS (VALUE:c4::INT),
+    year_id INT AS (VALUE:c4::INT),
+    weekday_id INT AS (VALUE:c4::INT)
+    
 )
 LOCATION = @nu_dataset_stage/d_time/
 PATTERN = '.*\\.csv'
@@ -160,8 +162,7 @@ AUTO_REFRESH = FALSE;
 -- d_week
 CREATE OR REPLACE EXTERNAL TABLE d_week (
     week_id INT AS (VALUE:c1::INT),
-    week_number INT AS (VALUE:c2::INT),
-    year INT AS (VALUE:c3::INT)
+    action_week INT AS (VALUE:c2::INT)
 )
 LOCATION = @nu_dataset_stage/d_week/
 PATTERN = '.*\\.csv'
@@ -172,8 +173,7 @@ AUTO_REFRESH = FALSE;
 -- d_weekday
 CREATE OR REPLACE EXTERNAL TABLE d_weekday (
     weekday_id INT AS (VALUE:c1::INT),
-    weekday_name STRING AS (VALUE:c2::STRING),
-    weekday_number INT AS (VALUE:c3::INT)
+    action_weekday STRING AS (VALUE:c2::STRING)
 )
 LOCATION = @nu_dataset_stage/d_weekday/
 PATTERN = '.*\\.csv'
@@ -184,7 +184,7 @@ AUTO_REFRESH = FALSE;
 -- d_year
 CREATE OR REPLACE EXTERNAL TABLE d_year (
     year_id INT AS (VALUE:c1::INT),
-    year INT AS (VALUE:c2::INT)
+    action_year INT AS (VALUE:c2::INT)
 )
 LOCATION = @nu_dataset_stage/d_year/
 PATTERN = '.*\\.csv'
@@ -192,27 +192,11 @@ FILE_FORMAT = (TYPE = 'CSV' SKIP_HEADER = 1)
 AUTO_REFRESH = FALSE;
 
 
--- pix_movements
-CREATE OR REPLACE EXTERNAL TABLE pix_movements (
-    id BIGINT AS (VALUE:c1::BIGINT),
-    account_id BIGINT AS (VALUE:c2::BIGINT),
-    pix_amount NUMBER(18,2) AS (VALUE:c3::NUMBER),
-    pix_requested_at TIMESTAMP AS (VALUE:c4::TIMESTAMP),
-    pix_completed_at TIMESTAMP AS (VALUE:c5::TIMESTAMP),
-    status STRING AS (VALUE:c6::STRING),
-    in_or_out STRING AS (VALUE:c7::STRING)
-)
-LOCATION = @nu_dataset_stage/pix_movements/
-PATTERN = '.*\\.csv'
-FILE_FORMAT = (TYPE = 'CSV' SKIP_HEADER = 1)
-AUTO_REFRESH = FALSE;
-
-
 -- state
 CREATE OR REPLACE EXTERNAL TABLE state (
-    state_id INT AS (VALUE:c1::INT),
-    state_name STRING AS (VALUE:c2::STRING),
-    region STRING AS (VALUE:c3::STRING)
+    state STRING AS (VALUE:c1::STRING),
+    country_id INT AS (VALUE:c2::INT),
+    state_id INT AS (VALUE:c3::INT)
 )
 LOCATION = @nu_dataset_stage/state/
 PATTERN = '.*\\.csv'
@@ -222,10 +206,12 @@ AUTO_REFRESH = FALSE;
 
 -- transfer_ins
 CREATE OR REPLACE EXTERNAL TABLE transfer_ins (
-    transfer_id BIGINT AS (VALUE:c1::BIGINT),
+    id BIGINT AS (VALUE:c1::BIGINT),
     account_id BIGINT AS (VALUE:c2::BIGINT),
-    amount NUMBER(18,2) AS (VALUE:c3::NUMBER),
-    transfer_date TIMESTAMP AS (VALUE:c4::TIMESTAMP)
+    amount FLOAT AS (VALUE:c3::FLOAT),
+    transaction_requested_at STRING AS (VALUE:c4::STRING),
+    transaction_completed_at STRING AS (VALUE:c5::STRING),
+    status STRING AS (VALUE:c5:: STRING)
 )
 LOCATION = @nu_dataset_stage/transfer_ins/
 PATTERN = '.*\\.csv'
@@ -235,10 +221,12 @@ AUTO_REFRESH = FALSE;
 
 -- transfer_outs
 CREATE OR REPLACE EXTERNAL TABLE transfer_outs (
-    transfer_id BIGINT AS (VALUE:c1::BIGINT),
+    id BIGINT AS (VALUE:c1::BIGINT),
     account_id BIGINT AS (VALUE:c2::BIGINT),
-    amount NUMBER(18,2) AS (VALUE:c3::NUMBER),
-    transfer_date TIMESTAMP AS (VALUE:c4::TIMESTAMP)
+    amount FLOAT AS (VALUE:c3::FLOAT),
+    transaction_requested_at STRING AS (VALUE:c4::STRING),
+    transaction_completed_at STRING AS (VALUE:c5::STRING),
+    status STRING AS (VALUE:c5:: STRING)
 )
 LOCATION = @nu_dataset_stage/transfer_outs/
 PATTERN = '.*\\.csv'

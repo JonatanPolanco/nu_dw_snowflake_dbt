@@ -1,0 +1,158 @@
+# models/staging/_staging__models.yml
+version: 2
+
+models:
+  - name: stg_pix_movements
+    description: "Cleaned and standardized PIX transaction data"
+    tests:
+      # Data volume tests
+      - dbt_utils.row_count:
+          above: 100
+      # Should only have completed transactions from source
+      - dbt_utils.equal_rowcount:
+          compare_model: source('nu_sources', 'pix_movements')
+          compare_condition: "status = 'completed'"
+          condition: "is_completed = TRUE"
+    columns:
+      - name: pix_movement_id
+        description: "Unique identifier for each PIX transaction"
+        tests:
+          - not_null
+          - unique
+      - name: account_id
+        description: "Account that executed the transaction"
+        tests:
+          - not_null
+          # Verify all accounts exist in staging accounts
+          - relationships:
+              to: ref('stg_accounts')
+              field: account_id
+      - name: amount
+        description: "Transaction amount in BRL"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0.01
+              max_value: 1000000
+              config:
+                severity: warn
+      - name: direction
+        description: "Transaction direction: inbound or outbound"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['inbound', 'outbound']
+      - name: is_completed
+        description: "Boolean flag indicating if transaction was completed"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]
+      - name: status
+        tests:
+          - not_null
+      - name: completed_at
+        description: "UTC timestamp when transaction was completed"
+        tests:
+          - not_null
+          # Date should be reasonable (not in future, not too old)
+          - dbt_utils.expression_is_true:
+              expression: ">= '2020-01-01'"
+          - dbt_utils.expression_is_true:
+              expression: "<= CURRENT_DATE()"
+
+  - name: stg_transfer_ins
+    description: "Cleaned incoming transfer transactions"
+    tests:
+      - dbt_utils.row_count:
+          above: 50
+    columns:
+      - name: transfer_id
+        description: "Unique identifier for incoming transfer"
+        tests:
+          - not_null
+          - unique
+      - name: account_id
+        description: "Receiving account ID"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_accounts')
+              field: account_id
+      - name: amount
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0.01
+              max_value: 1000000
+      - name: direction
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['inbound']  # Should only be inbound
+
+  - name: stg_transfer_outs
+    description: "Cleaned outgoing transfer transactions"
+    tests:
+      - dbt_utils.row_count:
+          above: 50
+    columns:
+      - name: transfer_id
+        description: "Unique identifier for outgoing transfer"
+        tests:
+          - not_null
+          - unique
+      - name: account_id
+        description: "Sending account ID"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_accounts')
+              field: account_id
+      - name: direction
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['outbound']  # Should only be outbound
+
+  - name: stg_accounts
+    description: "Cleaned and standardized account master data"
+    tests:
+      - dbt_utils.row_count:
+          above: 10
+    columns:
+      - name: account_id
+        description: "Unique account identifier"
+        tests:
+          - not_null
+          - unique
+      - name: status
+        description: "Current account status"
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['active', 'closed', 'suspended']
+      - name: is_active
+        description: "Boolean flag for active accounts"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]
+      - name: created_at
+        description: "UTC timestamp when account was created"
+        tests:
+          - not_null
+
+  - name: stg_customers
+    description: "Cleaned customer master data"
+    columns:
+      - name: customer_id
+        tests:
+          - not_null
+          - unique
+      - name: cpf
+        description: "Brazilian tax ID - SENSITIVE DATA"
+        tags: ['pii']
+        tests:
+          - not_null
+          - unique

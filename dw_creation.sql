@@ -149,8 +149,8 @@ CREATE OR REPLACE EXTERNAL TABLE d_time (
     action_timestamp STRING AS (VALUE:c2::STRING),
     week_id INT AS (VALUE:c3::INT),
     month_id INT AS (VALUE:c4::INT),
-    year_id INT AS (VALUE:c4::INT),
-    weekday_id INT AS (VALUE:c4::INT)
+    year_id INT AS (VALUE:c5::INT),
+    weekday_id INT AS (VALUE:c6::INT)
     
 )
 LOCATION = @nu_dataset_stage/d_time/

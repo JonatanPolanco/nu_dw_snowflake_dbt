@@ -1,0 +1,148 @@
+version: 2
+sources:
+  - name: nu_sources
+    description: "nubank transactional operation sources"
+    database: nu_db
+    schema: nu_raw_schema
+    tables:
+      - name: accounts
+        description: "Customer account information"
+        columns:
+          - name: account_id
+            tests:
+              - not_null
+              - unique
+          - name: account_name
+          - name: created_at
+          - name: status
+
+      - name: pix_movements
+        description: "PIX transaction movements"
+        columns:
+          - name: id
+            tests:
+              - not_null
+              - unique
+          - name: account_id
+          - name: pix_amount
+          - name: pix_requested_at
+          - name: pix_completed_at
+          - name: status
+          - name: in_or_out
+
+      - name: city
+        description: "City dimension table"
+        columns:
+          - name: city_id
+            tests:
+              - not_null
+              - unique
+          - name: city_name
+          - name: state_id
+
+      - name: country
+        description: "Country dimension table"
+        columns:
+          - name: country_id
+            tests:
+              - not_null
+              - unique
+          - name: country
+
+      - name: customers
+        description: "Customer information"
+        columns:
+          - name: customer_id
+            tests:
+              - not_null
+              - unique
+          - name: first_name
+          - name: last_name
+          - name: customer_city
+          - name: cpf
+          - name: country_name
+
+      - name: d_month
+        description: "Month dimension table"
+        columns:
+          - name: month_id
+            tests:
+              - not_null
+              - unique
+          - name: action_month
+
+      - name: d_time
+        description: "Time dimension table"
+        columns:
+          - name: time_id
+            tests:
+              - not_null
+              - unique
+          - name: action_timestamp
+          - name: week_id
+          - name: month_id
+          - name: year_id
+          - name: weekday_id
+
+      - name: d_week
+        description: "Week dimension table"
+        columns:
+          - name: week_id
+            tests:
+              - not_null
+              - unique
+          - name: action_week
+
+      - name: d_weekday
+        description: "Weekday dimension table"
+        columns:
+          - name: weekday_id
+            tests:
+              - not_null
+              - unique
+          - name: action_weekday
+
+      - name: d_year
+        description: "Year dimension table"
+        columns:
+          - name: year_id
+            tests:
+              - not_null
+              - unique
+          - name: action_year
+
+      - name: state
+        description: "State dimension table"
+        columns:
+          - name: state_id
+            tests:
+              - not_null
+              - unique
+          - name: state
+          - name: country_id
+
+      - name: transfer_ins
+        description: "Incoming transfer transactions"
+        columns:
+          - name: id
+            tests:
+              - not_null
+              - unique
+          - name: account_id
+          - name: amount
+          - name: transaction_requested_at
+          - name: transaction_completed_at
+          - name: status
+
+      - name: transfer_outs
+        description: "Outgoing transfer transactions"
+        columns:
+          - name: id
+            tests:
+              - not_null
+              - unique
+          - name: account_id
+          - name: amount
+          - name: transaction_requested_at
+          - name: transaction_completed_at
+          - name: status

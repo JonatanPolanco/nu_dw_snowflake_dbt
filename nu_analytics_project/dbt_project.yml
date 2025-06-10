@@ -1,16 +1,14 @@
-
 # Name your project! Project names should contain only lowercase characters
 # and underscores. A good package name should reflect your organization's
 # name or the intended use of these models
 name: 'nu_analytics_project'
 version: '1.0.0'
+config-version: 2
 
 # This setting configures which "profile" dbt uses for this project.
 profile: 'nu_analytics_project'
 
 # These configurations specify where dbt should look for different types of files.
-# The `model-paths` config, for example, states that models in this project can be
-# found in the "models/" directory. You probably won't need to change these!
 model-paths: ["models"]
 analysis-paths: ["analyses"]
 test-paths: ["tests"]
@@ -22,18 +20,87 @@ clean-targets:         # directories to be removed by `dbt clean`
   - "target"
   - "dbt_packages"
 
+# Variables para diferentes entornos
+vars:
+  # Fechas para filtros y testing
+  start_date: '2020-01-01'
+  end_date: '2024-12-31'
+  
+  # Environment flags
+  is_dev: true
+
+# Hooks que se ejecutan en momentos específicos
 on-run-start:
+  - "{{ log('Starting dbt run for Nubank Analytics', info=True) }}"
   - "{{ create_external_tables() }}"
+  
+on-run-end:
+  - "{{ log('Completed dbt run for Nubank Analytics', info=True) }}"
 
-
-# Configuring models
-# Full documentation: https://docs.getdbt.com/docs/configuring-models
-
-# In this example config, we tell dbt to build all models in the example/
-# directory as views. These settings can be overridden in the individual model
-# files using the `{{ config(...) }}` macro.
+# Configuring models por layer y funcionalidad
 models:
   nu_analytics_project:
-    # Config indicated by + and applies to all files under models/example/
-    example:
+    staging:
       +materialized: view
+      +tags: ['staging']
+      base:
+        +materialized: table
+        +tags: ['base']
+    intermediate:
+      +materialized: table
+      +tags: ['intermediate']
+    marts:
+      +materialized: table
+      +tags: ['marts']
+      
+      # Finance marts
+      finance:
+        +tags: ['finance', 'daily']
+        +cluster_by: ['account_id']
+        fct_transactions:
+          +tags: ['fact_table', 'high_volume', 'real_time']
+          +cluster_by: ['account_id', 'completion_utc_date']
+          +post_hook: "ALTER TABLE {{ this }} ADD SEARCH OPTIMIZATION ON EQUALITY(account_id, transaction_type);"
+        fct_account_monthly_balances:
+          +tags: ['fact_table', 'monthly', 'balances']
+          +cluster_by: ['account_id', 'month_date']
+          
+      # Core dimension tables
+      core:
+        +tags: ['dimensions', 'weekly']
+        dim_accounts:
+          +tags: ['dimension', 'scd_type_1']
+        dim_customers:
+          +tags: ['dimension', 'pii', 'scd_type_1']
+        dim_calendar:
+          +tags: ['dimension', 'time']
+          +cluster_by: ['utc_date']
+          
+      # Reporting tables
+      reporting:
+        +tags: ['reporting', 'business_users']
+        +materialized: table
+        rpt_monthly_business_kpis:
+          +tags: ['kpis', 'executive', 'monthly']
+        rpt_customer_segmentation:
+          +tags: ['segmentation', 'marketing']
+
+# Seeds configuration
+seeds:
+  nu_analytics_project:
+    +tags: ['seeds', 'lookup_tables']
+    +column_types:
+      id: bigint
+      
+# Snapshots configuration  
+snapshots:
+  nu_analytics_project:
+    +tags: ['snapshots', 'scd_type_2']
+    +target_schema: snapshots
+    +strategy: timestamp
+    +updated_at: updated_at
+
+# Tests configuration
+tests:
+  nu_analytics_project:
+    +tags: ['data_quality']

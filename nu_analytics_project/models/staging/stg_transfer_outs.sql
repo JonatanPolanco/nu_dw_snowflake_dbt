@@ -6,10 +6,10 @@ SELECT
     amount AS transaction_amount,
     
     -- Handle string timestamps
-    TIMESTAMP_SECONDS(transaction_requested_at) AS transaction_requested_at, 
-    TIMESTAMP_SECONDS(CAST(transaction_completed_at AS INT64)) AS transaction_completed_at,
-    EXTRACT(YEAR FROM TIMESTAMP_SECONDS(CAST(transaction_completed_at AS INT64))) AS completed_year,
-    EXTRACT(MONTH FROM TIMESTAMP_SECONDS(CAST(transaction_completed_at AS INT64))) AS completed_month,
+    TO_TIMESTAMP(transaction_requested_at) AS transaction_requested_at, 
+    TO_TIMESTAMP(CAST(transaction_completed_at AS BIGINT)) AS transaction_completed_at,
+    EXTRACT(YEAR FROM TO_TIMESTAMP(CAST(transaction_completed_at AS BIGINT))) AS completed_year,
+    EXTRACT(MONTH FROM TO_TIMESTAMP(CAST(transaction_completed_at AS BIGINT))) AS completed_month,
     
     LOWER(TRIM(status)) AS transaction_status,
     'out' AS transaction_direction,

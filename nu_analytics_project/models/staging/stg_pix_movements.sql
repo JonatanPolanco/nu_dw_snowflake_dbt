@@ -5,12 +5,12 @@ SELECT
     id AS transaction_id,
     account_id,
     pix_amount AS transaction_amount, 
-    TIMESTAMP_SECONDS(pix_requested_at) AS transaction_requested_at,
-    TIMESTAMP_SECONDS(CAST(pix_completed_at AS INT64)) AS transaction_completed_at,
-    EXTRACT(YEAR FROM TIMESTAMP_SECONDS(CAST(pix_completed_at AS INT64))) AS completed_year,
-    EXTRACT(MONTH FROM TIMESTAMP_SECONDS(CAST(pix_completed_at AS INT64))) AS completed_month,
+    TO_TIMESTAMP(pix_requested_at) AS transaction_requested_at,
+    TO_TIMESTAMP(pix_completed_at) AS transaction_completed_at,
+    EXTRACT(YEAR FROM TO_TIMESTAMP(pix_completed_at)) AS completed_year,
+    EXTRACT(MONTH FROM TO_TIMESTAMP(pix_completed_at)) AS completed_month,
     status,
-    in_or_out AS transaction_type  -- pix_in and pix_out as a transaction types
+    in_or_out AS transaction_type,  -- pix_in and pix_out as a transaction types
     LOWER(TRIM(status)) AS transaction_status,
     
     -- Standardize direction values

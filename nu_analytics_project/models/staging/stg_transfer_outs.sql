@@ -14,8 +14,8 @@ SELECT
     LOWER(TRIM(status)) AS transaction_status,
     'out' AS transaction_direction,
     
-    'transfer_out' AS source_table,
+    'transfer_outs' AS source_table,
     CURRENT_TIMESTAMP() AS _loaded_at
 
-FROM {{ source('nu_sources', 'transfer_out') }}
+FROM {{ source('nu_sources', 'transfer_outs') }}
 WHERE status = 'completed'

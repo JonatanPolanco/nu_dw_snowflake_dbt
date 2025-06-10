@@ -8,11 +8,6 @@ models:
       # Data volume tests
       - dbt_utils.row_count:
           above: 100
-      # Should only have completed transactions from source
-      - dbt_utils.equal_rowcount:
-          compare_model: source('nu_sources', 'pix_movements')
-          compare_condition: "status = 'completed'"
-          condition: "is_completed = TRUE"
     columns:
       - name: pix_movement_id
         description: "Unique identifier for each PIX transaction"

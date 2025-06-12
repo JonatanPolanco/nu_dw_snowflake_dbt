@@ -5,7 +5,7 @@ WITH
 accounts AS (
     SELECT DISTINCT account_id 
     FROM {{ ref('stg_accounts') }}
-    WHERE is_active = TRUE
+    WHERE account_status = 'active'
 ),
 
 time_dimension AS (
@@ -27,25 +27,25 @@ account_date_range AS (
     FROM (
         SELECT 
             account_id,
-            DATE(completed_at) AS completed_date
+            DATE(transaction_completed_at) AS completed_date
         FROM {{ ref('stg_pix_movements') }}
-        WHERE is_completed = TRUE
+        WHERE transaction_status = 'active'
         
         UNION ALL
         
         SELECT 
             account_id,
-            DATE(completed_at) AS completed_date
+            DATE(transaction_completed_at) AS completed_date
         FROM {{ ref('stg_transfer_ins') }}
-        WHERE is_completed = TRUE
+        WHERE transaction_status = 'active'
         
         UNION ALL
         
         SELECT 
             account_id,
-            DATE(completed_at) AS completed_date
+            DATE(transaction_completed_at) AS completed_date
         FROM {{ ref('stg_transfer_outs') }}
-        WHERE is_completed = TRUE
+        WHERE transaction_status = 'active'
     ) all_transactions
     GROUP BY account_id
 ),

@@ -18,8 +18,8 @@ enriched AS (
         t.account_id,
         
         -- 2. DIMENSIONS
-        t.channel,
-        t.direction,
+        t.transaction_channel,
+        t.transaction_direction,
         t.source_table,
         
         -- Time dimension attributes
@@ -30,38 +30,38 @@ enriched AS (
         td.quarter_number AS completed_quarter,
         
         -- 3. MEASURES
-        t.amount,
+        t.transaction_amount,
         CASE 
-            WHEN t.direction = 'inbound' THEN t.amount
-            WHEN t.direction = 'outbound' THEN -t.amount
+            WHEN t.transaction_direction = 'TRANSFER_IN' THEN t.transaction_amount
+            WHEN t.transaction_direction = 'TRANSFER_OUT' THEN -t.transaction_amount
             ELSE 0
         END AS signed_amount,
         
         -- 4. DATES/TIMESTAMPS
-        t.completed_at,
+        t.transaction_completed_at,
         td.utc_date AS completed_date,
         td.month_start_date AS completed_month_date,
         
         -- 5. BOOLEANS  
-        CASE WHEN t.amount >= 1000 THEN TRUE ELSE FALSE END AS is_large_transaction,
+        CASE WHEN t.transaction_amount >= 1000 THEN TRUE ELSE FALSE END AS is_large_transaction,
         
         -- 6. DERIVED ATTRIBUTES
         'BRL' AS currency_code,
         
         -- Transaction size categorization
         CASE 
-            WHEN t.amount < 100 THEN 'micro'
-            WHEN t.amount < 1000 THEN 'small'
-            WHEN t.amount < 10000 THEN 'medium' 
-            WHEN t.amount < 100000 THEN 'large'
+            WHEN t.transaction_amount < 100 THEN 'micro'
+            WHEN t.transaction_amount < 1000 THEN 'small'
+            WHEN t.transaction_amount < 10000 THEN 'medium' 
+            WHEN t.transaction_amount < 100000 THEN 'large'
             ELSE 'enterprise'
         END AS transaction_size_category
 
     FROM transactions t
     LEFT JOIN time_dimension td 
-        ON DATE(t.completed_at) = td.utc_date  
+        ON DATE(t.transaction_completed_at) = td.utc_date  
     
-    WHERE t.completed_at IS NOT NULL  -- Solo transacciones con fecha
+    WHERE t.transaction_completed_at IS NOT NULL  -- Solo transacciones con fecha
 )
 
 -- Simple select statement

@@ -9,7 +9,7 @@ models:
       - dbt_utils.row_count:
           above: 100
     columns:
-      - name: pix_movement_id
+      - name: transaction_id
         description: "Unique identifier for each PIX transaction"
         tests:
           - not_null
@@ -22,7 +22,7 @@ models:
           - relationships:
               to: ref('stg_accounts')
               field: account_id
-      - name: amount
+      - name: transaction_amount
         description: "Transaction amount in BRL"
         tests:
           - not_null
@@ -31,22 +31,16 @@ models:
               max_value: 1000000
               config:
                 severity: warn
-      - name: direction
+      - name: transaction_direction
         description: "Transaction direction: inbound or outbound"
         tests:
           - not_null
           - accepted_values:
               values: ['inbound', 'outbound']
-      - name: is_completed
-        description: "Boolean flag indicating if transaction was completed"
-        tests:
-          - not_null
-          - accepted_values:
-              values: [true, false]
       - name: status
         tests:
           - not_null
-      - name: completed_at
+      - name: transaction_completed_at
         description: "UTC timestamp when transaction was completed"
         tests:
           - not_null
@@ -62,7 +56,7 @@ models:
       - dbt_utils.row_count:
           above: 50
     columns:
-      - name: transfer_id
+      - name: transaction_id
         description: "Unique identifier for incoming transfer"
         tests:
           - not_null
@@ -74,13 +68,13 @@ models:
           - relationships:
               to: ref('stg_accounts')
               field: account_id
-      - name: amount
+      - name: transaction_amount
         tests:
           - not_null
           - dbt_utils.accepted_range:
               min_value: 0.01
               max_value: 1000000
-      - name: direction
+      - name: transaction_direction
         tests:
           - not_null
           - accepted_values:
@@ -92,7 +86,7 @@ models:
       - dbt_utils.row_count:
           above: 50
     columns:
-      - name: transfer_id
+      - name: transaction_id
         description: "Unique identifier for outgoing transfer"
         tests:
           - not_null
@@ -104,11 +98,18 @@ models:
           - relationships:
               to: ref('stg_accounts')
               field: account_id
-      - name: direction
+      - name: transaction_direction
         tests:
           - not_null
           - accepted_values:
               values: ['outbound']  # Should only be outbound
+      - name: transaction_amount
+        description: "Amount transferred in BRL"
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0.01
+              max_value: 1000000
 
   - name: stg_accounts
     description: "Cleaned and standardized account master data"
@@ -121,19 +122,13 @@ models:
         tests:
           - not_null
           - unique
-      - name: status
+      - name: account_status
         description: "Current account status"
         tests:
           - not_null
           - accepted_values:
               values: ['active', 'closed', 'suspended']
-      - name: is_active
-        description: "Boolean flag for active accounts"
-        tests:
-          - not_null
-          - accepted_values:
-              values: [true, false]
-      - name: created_at
+      - name: account_created_at
         description: "UTC timestamp when account was created"
         tests:
           - not_null

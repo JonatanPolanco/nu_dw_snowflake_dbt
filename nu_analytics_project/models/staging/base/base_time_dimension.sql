@@ -46,20 +46,68 @@ time_hierarchy AS (
         -- (No measures in time dimension)
         
         -- 4. DATES/TIMESTAMPS
-        dt.action_timestamp AS utc_timestamp,
-        DATE(dt.action_timestamp) AS utc_date,
+        -- Convert string to timestamp if needed
+        CASE 
+            WHEN dt.action_timestamp IS NOT NULL THEN 
+                TRY_TO_TIMESTAMP(dt.action_timestamp)
+            ELSE NULL 
+        END AS utc_timestamp,
         
-        -- Derived date attributes
-        DATE_TRUNC('MONTH', dt.action_timestamp) AS month_start_date,
-        DATE_TRUNC('WEEK', dt.action_timestamp) AS week_start_date,
-        DATE_TRUNC('YEAR', dt.action_timestamp) AS year_start_date,
-        DATE_TRUNC('QUARTER', dt.action_timestamp) AS quarter_start_date,
+        CASE 
+            WHEN dt.action_timestamp IS NOT NULL THEN 
+                DATE(TRY_TO_TIMESTAMP(dt.action_timestamp))
+            ELSE NULL 
+        END AS utc_date,
+        
+        -- Derived date attributes using the converted timestamp
+        CASE 
+            WHEN dt.action_timestamp IS NOT NULL THEN 
+                DATE_TRUNC('MONTH', TRY_TO_TIMESTAMP(dt.action_timestamp))
+            ELSE NULL 
+        END AS month_start_date,
+        
+        CASE 
+            WHEN dt.action_timestamp IS NOT NULL THEN 
+                DATE_TRUNC('WEEK', TRY_TO_TIMESTAMP(dt.action_timestamp))
+            ELSE NULL 
+        END AS week_start_date,
+        
+        CASE 
+            WHEN dt.action_timestamp IS NOT NULL THEN 
+                DATE_TRUNC('YEAR', TRY_TO_TIMESTAMP(dt.action_timestamp))
+            ELSE NULL 
+        END AS year_start_date,
+        
+        CASE 
+            WHEN dt.action_timestamp IS NOT NULL THEN 
+                DATE_TRUNC('QUARTER', TRY_TO_TIMESTAMP(dt.action_timestamp))
+            ELSE NULL 
+        END AS quarter_start_date,
         
         -- Additional useful date parts
-        EXTRACT(QUARTER FROM dt.action_timestamp) AS quarter_number,
-        EXTRACT(DAY FROM dt.action_timestamp) AS day_of_month,
-        EXTRACT(DAYOFYEAR FROM dt.action_timestamp) AS day_of_year,
-        EXTRACT(WEEK FROM dt.action_timestamp) AS week_of_year,
+        CASE 
+            WHEN dt.action_timestamp IS NOT NULL THEN 
+                EXTRACT(QUARTER FROM TRY_TO_TIMESTAMP(dt.action_timestamp))
+            ELSE NULL 
+        END AS quarter_number,
+        
+        CASE 
+            WHEN dt.action_timestamp IS NOT NULL THEN 
+                EXTRACT(DAY FROM TRY_TO_TIMESTAMP(dt.action_timestamp))
+            ELSE NULL 
+        END AS day_of_month,
+        
+        CASE 
+            WHEN dt.action_timestamp IS NOT NULL THEN 
+                EXTRACT(DAYOFYEAR FROM TRY_TO_TIMESTAMP(dt.action_timestamp))
+            ELSE NULL 
+        END AS day_of_year,
+        
+        CASE 
+            WHEN dt.action_timestamp IS NOT NULL THEN 
+                EXTRACT(WEEK FROM TRY_TO_TIMESTAMP(dt.action_timestamp))
+            ELSE NULL 
+        END AS week_of_year,
         
         -- 5. BOOLEANS
         CASE 
@@ -78,12 +126,15 @@ time_hierarchy AS (
         END AS is_winter_brazil,
         
         CASE 
-            WHEN EXTRACT(DAY FROM dt.action_timestamp) = 1 THEN TRUE 
+            WHEN dt.action_timestamp IS NOT NULL AND 
+                 EXTRACT(DAY FROM TRY_TO_TIMESTAMP(dt.action_timestamp)) = 1 THEN TRUE 
             ELSE FALSE 
         END AS is_month_start,
         
         CASE 
-            WHEN EXTRACT(DAY FROM LAST_DAY(dt.action_timestamp)) = EXTRACT(DAY FROM dt.action_timestamp) THEN TRUE 
+            WHEN dt.action_timestamp IS NOT NULL AND 
+                 EXTRACT(DAY FROM LAST_DAY(TRY_TO_TIMESTAMP(dt.action_timestamp))) = 
+                 EXTRACT(DAY FROM TRY_TO_TIMESTAMP(dt.action_timestamp)) THEN TRUE 
             ELSE FALSE 
         END AS is_month_end
 
@@ -96,6 +147,7 @@ time_hierarchy AS (
     -- Data quality filters
     WHERE dt.action_timestamp IS NOT NULL
       AND dt.time_id IS NOT NULL
+      AND TRY_TO_TIMESTAMP(dt.action_timestamp) IS NOT NULL  -- Only valid timestamps
 ),
 
 -- Additional business logic

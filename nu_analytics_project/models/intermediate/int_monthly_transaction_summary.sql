@@ -7,38 +7,38 @@ spine AS (
 ),
 
 transactions AS (
-    SELECT * FROM {{ ref('int_unified_transactions') }}
+    SELECT * FROM {{ ref('int_transactions_enriched') }}
 ),
 
 -- Logical CTEs - aggregate transactions by account and month
 monthly_aggregates AS (
     SELECT
-        DATE_TRUNC('MONTH', completed_at) AS month_date,
+        DATE_TRUNC('MONTH', transaction_completed_at) AS month_date,
         account_id,
         
         -- Volume metrics
-        SUM(CASE WHEN direction = 'inbound' THEN amount ELSE 0 END) AS inbound_volume,
-        SUM(CASE WHEN direction = 'outbound' THEN amount ELSE 0 END) AS outbound_volume,
+        SUM(CASE WHEN transaction_direction = 'TRANSFER_IN' THEN transaction_amount ELSE 0 END) AS inbound_volume,
+        SUM(CASE WHEN transaction_direction = 'TRANSFER_OUT' THEN transaction_amount ELSE 0 END) AS outbound_volume,
         SUM(signed_amount) AS net_flow,
         
         -- Transaction counts
         COUNT(*) AS total_transactions,
-        COUNT(CASE WHEN direction = 'inbound' THEN 1 END) AS inbound_transactions,
-        COUNT(CASE WHEN direction = 'outbound' THEN 1 END) AS outbound_transactions,
+        COUNT(CASE WHEN transaction_direction = 'TRANSFER_IN' THEN 1 END) AS inbound_transactions,
+        COUNT(CASE WHEN transaction_direction = 'TRANSFER_OUT' THEN 1 END) AS outbound_transactions,
         
         -- Channel breakdown
-        SUM(CASE WHEN channel = 'PIX' THEN signed_amount ELSE 0 END) AS pix_net_flow,
-        SUM(CASE WHEN channel = 'TRANSFER' THEN signed_amount ELSE 0 END) AS transfer_net_flow,
+        SUM(CASE WHEN transaction_channel = 'PIX' THEN signed_amount ELSE 0 END) AS pix_net_flow,
+        SUM(CASE WHEN transaction_channel = 'TRANSFER' THEN signed_amount ELSE 0 END) AS transfer_net_flow,
         
-        COUNT(CASE WHEN channel = 'PIX' THEN 1 END) AS pix_transactions,
-        COUNT(CASE WHEN channel = 'TRANSFER' THEN 1 END) AS transfer_transactions,
+        COUNT(CASE WHEN transaction_channel = 'PIX' THEN 1 END) AS pix_transactions,
+        COUNT(CASE WHEN transaction_channel = 'TRANSFER' THEN 1 END) AS transfer_transactions,
         
         -- Average transaction values
-        AVG(CASE WHEN direction = 'inbound' THEN amount END) AS avg_inbound_amount,
-        AVG(CASE WHEN direction = 'outbound' THEN amount END) AS avg_outbound_amount
+        AVG(CASE WHEN transaction_direction = 'TRANSFER_IN' THEN transaction_amount END) AS avg_inbound_transaction_amount,
+        AVG(CASE WHEN transaction_direction = 'TRANSFER_OUT' THEN transaction_amount END) AS avg_outbound_transaction_amount
 
     FROM transactions
-    WHERE completed_at IS NOT NULL
+    WHERE transaction_completed_at IS NOT NULL
     GROUP BY 1, 2
 ),
 
@@ -61,8 +61,8 @@ complete_monthly_summary AS (
         COALESCE(a.transfer_net_flow, 0) AS transfer_net_flow,
         COALESCE(a.pix_transactions, 0) AS pix_transactions,
         COALESCE(a.transfer_transactions, 0) AS transfer_transactions,
-        a.avg_inbound_amount,
-        a.avg_outbound_amount
+        a.avg_inbound_transaction_amount,
+        a.avg_outbound_transaction_amount
 
     FROM spine s
     LEFT JOIN monthly_aggregates a 
@@ -91,8 +91,8 @@ final AS (
         transfer_net_flow,
         pix_transactions,
         transfer_transactions,
-        avg_inbound_amount,
-        avg_outbound_amount,
+        avg_inbound_transaction_amount,
+        avg_outbound_transaction_amount,
         
         -- 4. DATES
         month_date,

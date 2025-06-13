@@ -1,79 +1,102 @@
-{{ config(materialized='table') }}
+{{ config(
+    materialized='table',
+    cluster_by=['account_id'],
+    tags=['marts', 'dimension', 'account']
+) }}
 
-WITH account_metrics AS (
+WITH accounts AS (
+    SELECT * FROM {{ ref('stg_accounts') }}
+),
+
+-- Get account activity summary
+account_activity AS (
     SELECT 
         account_id,
-        MIN(month_date) AS first_transaction_month,
-        MAX(month_date) AS last_transaction_month,
-        COUNT(*) AS total_active_months,
-        SUM(total_transactions) AS lifetime_transactions,
-        SUM(inbound_volume) AS lifetime_inbound,
-        SUM(outbound_volume) AS lifetime_outbound,
-        SUM(net_flow) AS lifetime_net_flow,
-        AVG(monthly_balance) AS avg_monthly_balance,
-        MAX(monthly_balance) AS max_monthly_balance,
-        MIN(monthly_balance) AS min_monthly_balance,
-        
-        -- Get current balance (last month)
-        LAST_VALUE(monthly_balance) OVER (
-            PARTITION BY account_id 
-            ORDER BY month_date 
-            ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
-        ) AS current_balance,
-        
-        -- Channel preferences
-        SUM(pix_transactions) AS total_pix_transactions,
-        SUM(transfer_transactions) AS total_transfer_transactions
-        
-    FROM {{ ref('fct_account_monthly_balances') }}
+        MIN(transaction_completed_at) AS first_transaction_date,
+        MAX(transaction_completed_at) AS last_transaction_date,
+        COUNT(*) AS total_lifetime_transactions,
+        SUM(transaction_amount) AS total_lifetime_volume,
+        COUNT(DISTINCT DATE(transaction_completed_at)) AS active_days
+    FROM {{ ref('int_transactions_enriched') }}
     GROUP BY account_id
+),
+
+final AS (
+    SELECT 
+        -- 1. IDENTIFIERS
+        a.account_id,
+        
+        -- 2. DIMENSIONS
+        a.account_name,
+        a.account_status,
+        
+        -- 3. DATES
+        a.account_created_at,
+        act.first_transaction_date,
+        act.last_transaction_date,
+        
+        -- 4. MEASURES
+        COALESCE(act.total_lifetime_transactions, 0) AS total_lifetime_transactions,
+        COALESCE(act.total_lifetime_volume, 0) AS total_lifetime_volume,
+        COALESCE(act.active_days, 0) AS active_days,
+        
+        -- 5. DERIVED ATTRIBUTES
+        -- Account age
+        DATEDIFF('day', a.account_created_at, CURRENT_DATE()) AS account_age_days,
+        
+        CASE 
+            WHEN DATEDIFF('day', a.account_created_at, CURRENT_DATE()) < 30 THEN 'New (< 30 days)'
+            WHEN DATEDIFF('day', a.account_created_at, CURRENT_DATE()) < 90 THEN 'Recent (30-90 days)'
+            WHEN DATEDIFF('day', a.account_created_at, CURRENT_DATE()) < 365 THEN 'Established (3-12 months)'
+            ELSE 'Mature (> 1 year)'
+        END AS account_age_segment,
+        
+        -- Activity level
+        CASE 
+            WHEN COALESCE(act.total_lifetime_transactions, 0) = 0 THEN 'Inactive'
+            WHEN COALESCE(act.total_lifetime_transactions, 0) <= 10 THEN 'Low Activity'
+            WHEN COALESCE(act.total_lifetime_transactions, 0) <= 50 THEN 'Medium Activity'
+            ELSE 'High Activity'
+        END AS activity_segment,
+        
+        -- Value tier
+        CASE 
+            WHEN COALESCE(act.total_lifetime_volume, 0) = 0 THEN 'No Value'
+            WHEN COALESCE(act.total_lifetime_volume, 0) < 1000 THEN 'Low Value'
+            WHEN COALESCE(act.total_lifetime_volume, 0) < 10000 THEN 'Medium Value'
+            WHEN COALESCE(act.total_lifetime_volume, 0) < 100000 THEN 'High Value'
+            ELSE 'Premium Value'
+        END AS value_tier,
+        
+        -- 6. BOOLEANS
+        CASE 
+            WHEN a.account_status = 'active' THEN TRUE 
+            ELSE FALSE 
+        END AS is_active,
+        
+        CASE 
+            WHEN act.first_transaction_date IS NOT NULL THEN TRUE 
+            ELSE FALSE 
+        END AS has_transactions,
+        
+        CASE 
+            WHEN act.last_transaction_date >= CURRENT_DATE() - INTERVAL '30 days' THEN TRUE 
+            ELSE FALSE 
+        END AS is_recently_active,
+        
+        CASE 
+            WHEN DATEDIFF('day', a.account_created_at, CURRENT_DATE()) <= 30 THEN TRUE 
+            ELSE FALSE 
+        END AS is_new_account,
+        
+        -- 7. METADATA
+        a.source_table,
+        a._loaded_at,
+        CURRENT_TIMESTAMP() AS _processed_at
+
+    FROM accounts a
+    LEFT JOIN account_activity act ON a.account_id = act.account_id
+    WHERE a.account_id IS NOT NULL
 )
 
-SELECT 
-    a.account_id,
-    a.account_name,
-    a.created_timestamp AS creation_utc_date,
-    a.account_status AS status,
-    
-    -- Activity metrics
-    m.first_transaction_month,
-    m.last_transaction_month,
-    m.total_active_months,
-    m.lifetime_transactions,
-    m.lifetime_inbound,
-    m.lifetime_outbound,
-    m.lifetime_net_flow,
-    m.current_balance,
-    m.avg_monthly_balance,
-    m.max_monthly_balance,
-    m.min_monthly_balance,
-    
-    -- Customer segmentation
-    CASE 
-        WHEN m.avg_monthly_balance >= 100000 THEN 'premium'
-        WHEN m.avg_monthly_balance >= 10000 THEN 'high_value'
-        WHEN m.avg_monthly_balance >= 1000 THEN 'standard'
-        ELSE 'basic'
-    END AS customer_tier,
-    
-    CASE 
-        WHEN m.lifetime_transactions >= 200 THEN 'high_activity'
-        WHEN m.lifetime_transactions >= 50 THEN 'medium_activity'
-        WHEN m.lifetime_transactions >= 10 THEN 'low_activity'
-        ELSE 'dormant'
-    END AS activity_level,
-    
-    -- Channel preferences
-    CASE 
-        WHEN m.total_pix_transactions > m.total_transfer_transactions * 2 THEN 'pix_heavy'
-        WHEN m.total_transfer_transactions > m.total_pix_transactions * 2 THEN 'transfer_heavy'
-        ELSE 'balanced'
-    END AS channel_preference,
-    
-    -- Account age in months
-    DATEDIFF('month', a.created_timestamp, CURRENT_DATE()) AS account_age_months,
-    
-    CURRENT_TIMESTAMP() AS _loaded_at
-
-FROM {{ ref('stg_accounts') }} a
-LEFT JOIN account_metrics m ON a.account_id = m.account_id
+SELECT * FROM final

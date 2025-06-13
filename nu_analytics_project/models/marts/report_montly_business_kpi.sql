@@ -1,46 +1,126 @@
-{{ config(materialized='table') }}
+{{ config(
+    materialized='table',
+    cluster_by=['report_month'],
+    tags=['marts', 'reporting', 'kpi']
+) }}
 
-SELECT 
-    month_date,
-    year,
-    month,
-    
-    -- Account metrics
-    COUNT(DISTINCT account_id) AS total_active_accounts,
-    COUNT(DISTINCT CASE WHEN has_activity THEN account_id END) AS accounts_with_transactions,
-    COUNT(DISTINCT CASE WHEN balance_category = 'negative' THEN account_id END) AS accounts_negative_balance,
-    COUNT(DISTINCT CASE WHEN balance_category IN ('high', 'premium') THEN account_id END) AS high_value_accounts,
-    
-    -- Financial KPIs
-    SUM(inbound_volume) AS total_inbound_volume,
-    SUM(outbound_volume) AS total_outbound_volume,
-    SUM(net_flow) AS total_net_flow,
-    SUM(monthly_balance) AS total_system_balance,
-    
-    -- Transaction metrics
-    SUM(total_transactions) AS total_transactions,
-    SUM(pix_transactions) AS total_pix_transactions,
-    SUM(transfer_transactions) AS total_transfer_transactions,
-    
-    -- Averages and distributions
-    AVG(monthly_balance) AS avg_account_balance,
-    MEDIAN(monthly_balance) AS median_account_balance,
-    AVG(total_transactions) AS avg_transactions_per_account,
-    
-    -- Channel analysis
-    ROUND(SUM(pix_transactions) * 100.0 / NULLIF(SUM(total_transactions), 0), 2) AS pix_transaction_share_pct,
-    ROUND(SUM(pix_net_flow) * 100.0 / NULLIF(SUM(net_flow), 0), 2) AS pix_volume_share_pct,
-    
-    -- Growth metrics (vs previous month)
-    LAG(SUM(total_transactions)) OVER (ORDER BY year, month) AS prev_month_transactions,
-    ROUND(
-        (SUM(total_transactions) - LAG(SUM(total_transactions)) OVER (ORDER BY year, month)) * 100.0 
-        / NULLIF(LAG(SUM(total_transactions)) OVER (ORDER BY year, month), 0), 
-        2
-    ) AS transaction_growth_mom_pct,
-    
-    CURRENT_TIMESTAMP() AS _loaded_at
+WITH monthly_balances AS (
+    SELECT * FROM {{ ref('fct_account_monthly_balances') }}
+),
 
-FROM {{ ref('fct_account_monthly_balances') }}
-GROUP BY month_date, year, month
-ORDER BY year, month
+transactions AS (
+    SELECT * FROM {{ ref('fct_transactions') }}
+),
+
+accounts AS (
+    SELECT * FROM {{ ref('dim_account') }}
+),
+
+-- Monthly aggregations
+monthly_kpis AS (
+    SELECT
+        mb.month_date AS report_month,
+        mb.year,
+        mb.month,
+        
+        -- Account metrics
+        COUNT(DISTINCT mb.account_id) AS total_active_accounts,
+        COUNT(DISTINCT CASE WHEN mb.has_activity THEN mb.account_id END) AS active_accounts,
+        COUNT(DISTINCT CASE WHEN mb.is_high_activity THEN mb.account_id END) AS high_activity_accounts,
+        
+        -- Volume metrics
+        SUM(mb.inbound_volume) AS total_inbound_volume,
+        SUM(mb.outbound_volume) AS total_outbound_volume,
+        SUM(mb.net_flow) AS total_net_flow,
+        
+        -- Transaction metrics
+        SUM(mb.total_transactions) AS total_transactions,
+        SUM(mb.pix_transactions) AS total_pix_transactions,
+        SUM(mb.transfer_transactions) AS total_transfer_transactions,
+        
+        -- Average metrics
+        AVG(mb.avg_inbound_transaction_amount) AS avg_inbound_amount_monthly,
+        AVG(mb.avg_outbound_transaction_amount) AS avg_outbound_amount_monthly,
+        
+        -- Channel metrics
+        SUM(mb.pix_net_flow) AS total_pix_flow,
+        SUM(mb.transfer_net_flow) AS total_transfer_flow
+
+    FROM monthly_balances mb
+    WHERE mb.month_date IS NOT NULL
+    GROUP BY mb.month_date, mb.year, mb.month
+),
+
+-- Add derived KPIs
+final AS (
+    SELECT
+        report_month,
+        year,
+        month,
+        
+        -- Account KPIs
+        total_active_accounts,
+        active_accounts,
+        high_activity_accounts,
+        
+        ROUND(
+            CASE 
+                WHEN total_active_accounts > 0 
+                THEN (active_accounts::FLOAT / total_active_accounts) * 100 
+                ELSE 0 
+            END, 2
+        ) AS account_activation_rate_pct,
+        
+        -- Volume KPIs
+        total_inbound_volume,
+        total_outbound_volume,
+        total_net_flow,
+        
+        ROUND(
+            CASE 
+                WHEN total_outbound_volume > 0 
+                THEN total_inbound_volume / total_outbound_volume 
+                ELSE NULL 
+            END, 2
+        ) AS inflow_outflow_ratio,
+        
+        -- Transaction KPIs
+        total_transactions,
+        total_pix_transactions,
+        total_transfer_transactions,
+        
+        ROUND(
+            CASE 
+                WHEN total_transactions > 0 
+                THEN (total_pix_transactions::FLOAT / total_transactions) * 100 
+                ELSE 0 
+            END, 2
+        ) AS pix_adoption_rate_pct,
+        
+        -- Average transaction values
+        ROUND(avg_inbound_amount_monthly, 2) AS avg_inbound_amount,
+        ROUND(avg_outbound_amount_monthly, 2) AS avg_outbound_amount,
+        
+        -- Channel performance
+        total_pix_flow,
+        total_transfer_flow,
+        
+        ROUND(
+            CASE 
+                WHEN (total_pix_flow + total_transfer_flow) != 0 
+                THEN (total_pix_flow::FLOAT / (total_pix_flow + total_transfer_flow)) * 100 
+                ELSE 0 
+            END, 2
+        ) AS pix_volume_share_pct,
+        
+        -- Growth indicators (month-over-month)
+        LAG(total_inbound_volume) OVER (ORDER BY report_month) AS prev_month_inbound_volume,
+        LAG(total_transactions) OVER (ORDER BY report_month) AS prev_month_transactions,
+        
+        -- Metadata
+        CURRENT_TIMESTAMP() AS _processed_at
+
+    FROM monthly_kpis
+)
+
+SELECT * FROM final

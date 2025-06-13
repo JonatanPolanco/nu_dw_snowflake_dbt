@@ -1,83 +1,95 @@
 {{ config(
     materialized='table',
     cluster_by=['account_id', 'month_date'],
-    post_hook="ALTER TABLE {{ this }} ADD SEARCH OPTIMIZATION;"
+    tags=['marts', 'fact', 'balances']
 ) }}
 
-WITH balance_calculation AS (
+WITH monthly_summary AS (
+    SELECT * FROM {{ ref('int_monthly_transaction_summary') }}
+),
+
+final AS (
     SELECT 
+        -- 1. IDENTIFIERS
         account_id,
-        month_date,
+        
+        -- 2. DIMENSIONS
         year,
         month,
+        
+        -- 3. MEASURES - Volume metrics
         inbound_volume,
         outbound_volume,
         net_flow,
+        
+        -- Transaction counts
         total_transactions,
+        inbound_transactions,
+        outbound_transactions,
         
-        -- Running balance calculation
-        SUM(net_flow) OVER (
-            PARTITION BY account_id 
-            ORDER BY year, month 
-            ROWS UNBOUNDED PRECEDING
-        ) AS monthly_balance,
-        
-        -- Channel metrics
+        -- Channel breakdown
         pix_net_flow,
         transfer_net_flow,
         pix_transactions,
         transfer_transactions,
         
-        -- Transaction size distribution
-        micro_transactions,
-        small_transactions, 
-        medium_transactions,
-        large_transactions,
+        -- Average amounts (using existing columns)
+        avg_inbound_transaction_amount,
+        avg_outbound_transaction_amount,
         
-        -- Averages
-        avg_inbound_amount,
-        avg_outbound_amount
+        -- 4. DATES
+        month_date,
         
-    FROM {{ ref('int_monthly_transaction_summary') }}
+        -- 5. BOOLEANS
+        has_activity,
+        
+        -- Additional flags
+        CASE 
+            WHEN inbound_volume > outbound_volume THEN TRUE 
+            ELSE FALSE 
+        END AS is_net_positive,
+        
+        CASE 
+            WHEN total_transactions >= 10 THEN TRUE 
+            ELSE FALSE 
+        END AS is_high_activity,
+        
+        CASE 
+            WHEN pix_transactions > transfer_transactions THEN TRUE 
+            ELSE FALSE 
+        END AS prefers_pix,
+        
+        -- 6. DERIVED METRICS
+        -- Balance ratios
+        CASE 
+            WHEN outbound_volume > 0 
+            THEN ROUND(inbound_volume / outbound_volume, 2)
+            ELSE NULL 
+        END AS inbound_outbound_ratio,
+        
+        -- Activity intensity
+        CASE 
+            WHEN total_transactions = 0 THEN 'No Activity'
+            WHEN total_transactions <= 5 THEN 'Low Activity'
+            WHEN total_transactions <= 20 THEN 'Medium Activity'
+            ELSE 'High Activity'
+        END AS activity_level,
+        
+        -- Channel preference
+        CASE 
+            WHEN pix_transactions = 0 AND transfer_transactions = 0 THEN 'No Activity'
+            WHEN pix_transactions > transfer_transactions THEN 'PIX Preferred'
+            WHEN transfer_transactions > pix_transactions THEN 'Transfer Preferred'
+            ELSE 'Mixed Usage'
+        END AS channel_preference,
+        
+        -- 7. METADATA
+        _loaded_at,
+        CURRENT_TIMESTAMP() AS _processed_at
+
+    FROM monthly_summary
+    WHERE account_id IS NOT NULL
+      AND month_date IS NOT NULL
 )
 
-SELECT 
-    *,
-    
-    -- Activity indicators
-    CASE WHEN total_transactions > 0 THEN TRUE ELSE FALSE END AS has_activity,
-    
-    -- Balance categories
-    CASE 
-        WHEN monthly_balance < 0 THEN 'negative'
-        WHEN monthly_balance = 0 THEN 'zero'
-        WHEN monthly_balance BETWEEN 0 AND 1000 THEN 'low'
-        WHEN monthly_balance BETWEEN 1000 AND 10000 THEN 'medium'
-        WHEN monthly_balance BETWEEN 10000 AND 100000 THEN 'high'
-        ELSE 'premium'
-    END AS balance_category,
-    
-    -- Net flow direction
-    CASE 
-        WHEN net_flow > 0 THEN 'positive'
-        WHEN net_flow < 0 THEN 'negative'
-        ELSE 'neutral'
-    END AS net_flow_direction,
-    
-    -- Month-over-month balance change
-    monthly_balance - LAG(monthly_balance) OVER (
-        PARTITION BY account_id 
-        ORDER BY year, month
-    ) AS balance_change_mom,
-    
-    -- Channel preference
-    CASE 
-        WHEN pix_transactions > transfer_transactions THEN 'pix_preferred'
-        WHEN transfer_transactions > pix_transactions THEN 'transfer_preferred' 
-        WHEN pix_transactions = transfer_transactions AND pix_transactions > 0 THEN 'balanced'
-        ELSE 'inactive'
-    END AS channel_preference,
-    
-    CURRENT_TIMESTAMP() AS _loaded_at
-
-FROM balance_calculation
+SELECT * FROM final

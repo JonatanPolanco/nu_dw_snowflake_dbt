@@ -1,3 +1,3 @@
 # Datawarehouse full Architecture using snowflake and DBT
 
-- documentation: https://docs.google.com/document/d/1adQ5KTXQtLlniL3oeWdUOkRJiMCdFkYbaRFjgcPXh-4/edit?usp=sharing
+- documentation: https://drive.google.com/file/d/1VHgmB5SyKxahXzVy6LUlhKCD0YPbl_U0/view?usp=sharing

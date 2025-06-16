@@ -1,3 +1,3 @@
-# Astro Runtime includes the following pre-installed providers packages: https://www.astronomer.io/docs/astro/runtime-image-architecture#provider-packages
+# Versiones compatibles con Airflow 2.x
 astronomer-cosmos
 apache-airflow-providers-snowflake

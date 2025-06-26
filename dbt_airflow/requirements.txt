@@ -1,3 +1,4 @@
 # Versiones compatibles con Airflow 2.x
 astronomer-cosmos
 apache-airflow-providers-snowflake
+apache-airflow-providers-google

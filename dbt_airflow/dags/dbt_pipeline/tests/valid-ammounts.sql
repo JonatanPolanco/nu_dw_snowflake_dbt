@@ -1,6 +1,6 @@
 SELECT *
 FROM (
-    SELECT 'pix_movements' as source_table, pix_movement_id as transaction_id, amount
+    SELECT 'pix_movements' as source_table, transaction_id, transaction_amount
     FROM {{ ref('stg_pix_movements') }}
     WHERE amount <= 0
 

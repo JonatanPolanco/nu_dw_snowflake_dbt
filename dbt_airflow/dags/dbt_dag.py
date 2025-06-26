@@ -181,11 +181,11 @@ with DAG(
     max_active_runs=1,  # Evitar ejecuciones concurrentes
 ) as dag:
     
-    # Sensor para detectar nuevos datos en GCS (más específico)
+    # Sensor para detectar nuevos datos en GCS
     wait_for_new_data = GCSObjectsWithPrefixExistenceSensor(
         task_id="wait_for_new_data",
         bucket="nu_dataset",
-        prefix="Tables/{{ ds }}/",  # Más específico por fecha
+        prefix="Tables/",  # Busca cualquier archivo en Tables/
         google_cloud_conn_id="gcp_default",
         timeout=300,
         poke_interval=60,
@@ -200,47 +200,22 @@ with DAG(
         # Crear tasks separados por categoría para mejor paralelización
         for category, tables in EXTERNAL_TABLES_CONFIG.items():
             
-            # SQL para refrescar tablas de la categoría con manejo de errores
-            # Escapar nombres de tablas para prevenir SQL injection
-            safe_table_refreshes = []
+            # SQL simplificado para refrescar tablas de la categoría
+            refresh_statements = []
             for table in tables:
                 # Validar que el nombre de tabla solo contiene caracteres seguros
                 if not table.replace('_', '').replace('-', '').isalnum():
                     raise ValueError(f"Nombre de tabla inseguro: {table}")
-                safe_table_refreshes.append(f"""
-                BEGIN
-                    ALTER EXTERNAL TABLE NU_DB.NU_RAW_SCHEMA.{table} REFRESH;
-                    LET success_count := success_count + 1;
-                EXCEPTION
-                    WHEN OTHER THEN
-                        LET error_count := error_count + 1;
-                        SYSTEM$LOG('ERROR', 'Failed to refresh {table}: ' || SQLERRM);
-                END;""")
+                refresh_statements.append(f"ALTER EXTERNAL TABLE NU_DB.NU_RAW_SCHEMA.{table} REFRESH;")
             
-            refresh_sql = f"""
-            BEGIN
-                -- Variables para logging
-                LET error_count INTEGER := 0;
-                LET success_count INTEGER := 0;
-                
-                -- Refresh tablas de categoría: {category}
-            """ + "\n".join(safe_table_refreshes) + f"""
-                
-                -- Log resultados
-                SYSTEM$LOG('INFO', 'Category {category}: ' || success_count || ' successful, ' || error_count || ' errors');
-                
-                -- Fallar si todas las tablas de alta frecuencia fallaron (son las más críticas)
-                IF ('{category}' = 'high_frequency' AND success_count = 0) THEN
-                    RAISE EXCEPTION 'Critical high frequency tables failed to refresh';
-                END IF;
-            END;
-            """
+            refresh_sql = "\n".join(refresh_statements)
             
             refresh_task = SQLExecuteQueryOperator(
                 task_id=f"refresh_{category}_tables",
                 conn_id="snowflake_conn",
                 sql=refresh_sql,
-                autocommit=True
+                autocommit=True,
+                split_statements=True  # Permitir múltiples statements
             )
             
             refresh_tasks.append(refresh_task)

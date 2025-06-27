@@ -15,8 +15,8 @@ SELECT
     
     -- Standardize direction values
     CASE 
-        WHEN LOWER(TRIM(in_or_out)) = 'in' THEN 'in'
-        WHEN LOWER(TRIM(in_or_out)) = 'out' THEN 'out'
+        WHEN LOWER(TRIM(in_or_out)) = 'pix_in' THEN 'in'
+        WHEN LOWER(TRIM(in_or_out)) = 'pix_out' THEN 'out'
         ELSE 'unknown'
     END AS transaction_direction,
     

@@ -143,7 +143,7 @@ models:
         tests:
           - not_null
           - accepted_values:
-              values: ['active', 'closed', 'suspended']
+              values: ['active', 'inactive']
       - name: account_created_at
         description: "UTC timestamp when account was created"
         tests:

@@ -30,7 +30,11 @@ models:
               min_value: 0.01
               max_value: 1000000
               config:
-                severity: warn
+                severity: error
+                # Error if there are more than 50 invalid ammounts
+                error_if: ">50"
+                # Warn if there are any invalid ammounts
+                warn_if: ">0"
       - name: transaction_direction
         description: "Transaction direction: inbound or outbound"
         tests:
@@ -74,6 +78,12 @@ models:
           - dbt_utils.accepted_range:
               min_value: 0.01
               max_value: 1000000
+              config:
+                severity: error
+                # Error if there are more than 50 invalid ammounts
+                error_if: ">50"
+                # Warn if there are any invalid ammounts
+                warn_if: ">0"
       - name: transaction_direction
         tests:
           - not_null
@@ -110,6 +120,12 @@ models:
           - dbt_utils.accepted_range:
               min_value: 0.01
               max_value: 1000000
+              config:
+                severity: error
+                # Error if there are more than 50 invalid ammounts
+                error_if: ">50"
+                # Warn if there are any invalid ammounts
+                warn_if: ">0"
 
   - name: stg_accounts
     description: "Cleaned and standardized account master data"

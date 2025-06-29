@@ -17,14 +17,14 @@ monthly_aggregates AS (
         account_id,
         
         -- Volume metrics
-        SUM(CASE WHEN transaction_direction = 'TRANSFER_IN' THEN transaction_amount ELSE 0 END) AS inbound_volume,
-        SUM(CASE WHEN transaction_direction = 'TRANSFER_OUT' THEN transaction_amount ELSE 0 END) AS outbound_volume,
+        SUM(CASE WHEN transaction_direction = 'in' THEN transaction_amount ELSE 0 END) AS inbound_volume,
+        SUM(CASE WHEN transaction_direction = 'out' THEN transaction_amount ELSE 0 END) AS outbound_volume,
         SUM(signed_amount) AS net_flow,
         
         -- Transaction counts
         COUNT(*) AS total_transactions,
-        COUNT(CASE WHEN transaction_direction = 'TRANSFER_IN' THEN 1 END) AS inbound_transactions,
-        COUNT(CASE WHEN transaction_direction = 'TRANSFER_OUT' THEN 1 END) AS outbound_transactions,
+        COUNT(CASE WHEN transaction_direction = 'in' THEN 1 END) AS inbound_transactions,
+        COUNT(CASE WHEN transaction_direction = 'out' THEN 1 END) AS outbound_transactions,
         
         -- Channel breakdown
         SUM(CASE WHEN transaction_channel = 'PIX' THEN signed_amount ELSE 0 END) AS pix_net_flow,
@@ -34,8 +34,8 @@ monthly_aggregates AS (
         COUNT(CASE WHEN transaction_channel = 'TRANSFER' THEN 1 END) AS transfer_transactions,
         
         -- Average transaction values
-        AVG(CASE WHEN transaction_direction = 'TRANSFER_IN' THEN transaction_amount END) AS avg_inbound_transaction_amount,
-        AVG(CASE WHEN transaction_direction = 'TRANSFER_OUT' THEN transaction_amount END) AS avg_outbound_transaction_amount
+        AVG(CASE WHEN transaction_direction = 'in' THEN transaction_amount END) AS avg_inbound_transaction_amount,
+        AVG(CASE WHEN transaction_direction = 'out' THEN transaction_amount END) AS avg_outbound_transaction_amount
 
     FROM transactions
     WHERE transaction_completed_at IS NOT NULL

@@ -1,7 +1,7 @@
 WITH date_spine AS (
     SELECT 
         DATE_TRUNC('day', DATEADD('day', row_number() OVER (ORDER BY NULL) - 1, '2020-01-01'::DATE)) AS expected_date
-    FROM TABLE(GENERATOR(ROWCOUNT => 2000))  -- ~5 years of dates
+    FROM TABLE(GENERATOR(ROWCOUNT => 366))
 ),
 
 missing_dates AS (

@@ -32,8 +32,8 @@ enriched AS (
         -- 3. MEASURES
         t.transaction_amount,
         CASE 
-            WHEN t.transaction_direction = 'TRANSFER_IN' THEN t.transaction_amount
-            WHEN t.transaction_direction = 'TRANSFER_OUT' THEN -t.transaction_amount
+            WHEN t.transaction_direction = 'in' THEN t.transaction_amount
+            WHEN t.transaction_direction = 'out' THEN -t.transaction_amount
             ELSE 0
         END AS signed_amount,
         

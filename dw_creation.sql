@@ -70,7 +70,8 @@ CREATE OR REPLACE STAGE nu_dataset_stage
 CREATE OR REPLACE EXTERNAL TABLE pix_movements (
     id BIGINT AS (VALUE:c1::BIGINT),
     account_id BIGINT AS (VALUE:c2::BIGINT),
-    pix_amount NUMBER(18,2) AS (VALUE:c3::NUMBER),
+    pix_amount NUMBER(18,2) AS (
+    TO_DECIMAL(VALUE:c3::STRING, 18, 2)),
     pix_requested_at TIMESTAMP AS (TRY_TO_TIMESTAMP(NULLIF(VALUE:c4::STRING, 'None'))),
     pix_completed_at TIMESTAMP AS (TRY_TO_TIMESTAMP(NULLIF(VALUE:c5::STRING, 'None'))),
     status STRING AS (VALUE:c6::STRING),
@@ -208,7 +209,8 @@ AUTO_REFRESH = FALSE;
 CREATE OR REPLACE EXTERNAL TABLE transfer_ins (
     id BIGINT AS (VALUE:c1::BIGINT),
     account_id BIGINT AS (VALUE:c2::BIGINT),
-    amount FLOAT AS (VALUE:c3::FLOAT),
+    amount NUMBER(18,2) AS (
+    TO_DECIMAL(VALUE:c3::STRING, 18, 2)),
     transaction_requested_at STRING AS (VALUE:c4::STRING),
     transaction_completed_at STRING AS (VALUE:c5::STRING),
     status STRING AS (VALUE:c5:: STRING)
@@ -223,7 +225,8 @@ AUTO_REFRESH = FALSE;
 CREATE OR REPLACE EXTERNAL TABLE transfer_outs (
     id BIGINT AS (VALUE:c1::BIGINT),
     account_id BIGINT AS (VALUE:c2::BIGINT),
-    amount FLOAT AS (VALUE:c3::FLOAT),
+    amount NUMBER(18,2) AS (
+    TO_DECIMAL(VALUE:c3::STRING, 18, 2)),
     transaction_requested_at STRING AS (VALUE:c4::STRING),
     transaction_completed_at STRING AS (VALUE:c5::STRING),
     status STRING AS (VALUE:c5:: STRING)

@@ -87,7 +87,7 @@ def validate_external_table_refresh(**context):
     
     # Validar cada categoría según su frecuencia
     for category, tables in EXTERNAL_TABLES_CONFIG.items():
-        logger.info(f"🔍 Validando categoría: {category} ({len(tables)} tablas)")
+        logger.info(f"Validando categoría: {category} ({len(tables)} tablas)")
         
         if category in ["high_frequency", "medium_frequency"]:
             # Para tablas que deben refrescarse: validar timestamp
@@ -109,15 +109,15 @@ def validate_external_table_refresh(**context):
             
             if missing_refresh:
                 error_msg = f"Tablas {category} sin refresh reciente (>{threshold}): {missing_refresh}"
-                logger.error(f"❌ {error_msg}")
+                logger.error(f"{error_msg}")
                 if category == "high_frequency":
                     # High frequency es crítico
                     all_validation_errors.append(f"CRÍTICO: {error_msg}")
                 else:
                     # Medium frequency es warning
-                    logger.warning(f"⚠️  WARNING: {error_msg}")
+                    logger.warning(f"WARNING: {error_msg}")
             else:
-                logger.info(f"✅ Todas las tablas {category} refrescadas recientemente")
+                logger.info(f"Todas las tablas {category} refrescadas recientemente")
             
             validation_results[category] = {
                 "refreshed": len(refreshed_names),
@@ -140,10 +140,10 @@ def validate_external_table_refresh(**context):
             empty_tables = [row[0] for row in data_results if row[1] == 0]
             tables_with_data = [row[0] for row in data_results if row[1] > 0]
             
-            if empty_tables:
-                logger.warning(f"⚠️  Tablas {category} vacías (puede ser normal): {empty_tables}")
+            if empty_tables: 
+                logger.warning(f"Tablas {category} vacías (puede ser normal): {empty_tables}")
             else:
-                logger.info(f"✅ Todas las tablas {category} tienen datos")
+                logger.info(f"Todas las tablas {category} tienen datos")
             
             validation_results[category] = {
                 "with_data": len(tables_with_data),
@@ -152,7 +152,7 @@ def validate_external_table_refresh(**context):
             }
     
     # Logging resumen
-    logger.info("📊 Resumen de validación:")
+    logger.info("Resumen de validación:")
     for category, results in validation_results.items():
         if category in ["high_frequency", "medium_frequency"]:
             logger.info(f"  {category}: {results['refreshed']} refrescadas, {results['missing']} faltantes")
@@ -167,15 +167,14 @@ def validate_external_table_refresh(**context):
     context['ti'].xcom_push(key='validation_results', value=validation_results)
     context['ti'].xcom_push(key='critical_errors', value=len(all_validation_errors))
     
-    return f"✅ Validación exitosa por frecuencias"
+    return f"Validación exitosa por frecuencias"
 
 # DAG principal
 with DAG(
     dag_id="nu_data_pipeline",
     default_args=default_args,
-    description="Pipeline Nu mejorado: GCS → Snowflake → dbt con mejor control de errores",
+    description="Pipeline Nu GCS → Snowflake → dbt",
     schedule=None,
-    start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=["nu", "gcs", "snowflake", "dbt", "production"],
     max_active_runs=1,  # Evitar ejecuciones concurrentes
@@ -245,7 +244,7 @@ with DAG(
     # Checkpoint mejorado con métricas por frecuencia
     def log_pipeline_ready(**context):
         validation_results = context['ti'].xcom_pull(key='validation_results', task_ids='refresh_external_tables.validate_refresh')
-        logging.getLogger(__name__).info(f"✅ Pipeline ready! Validation results: {validation_results}")
+        logging.getLogger(__name__).info(f"Pipeline ready! Validation results: {validation_results}")
         return "Pipeline ready"
     
     data_ready_checkpoint = PythonOperator(

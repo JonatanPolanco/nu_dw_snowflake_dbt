@@ -1,6 +1,6 @@
 # Datawarehouse full pipeline Architecture using:
 ### GCP: GCS
-### Snowflake: Snowpipe, DW management
+### Snowflake: External tables, DW management
 ### DBT: Medallion Architecture for analytical data modeling, Tests.
 ### Airflow: Dags, Sensors, alerts and notifications.
 

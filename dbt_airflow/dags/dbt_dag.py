@@ -1,276 +1,322 @@
-import os
+
+"""
+Autor: Jonatan Polanco
+Date: 2025-07-05
+
+Purpose: This DAG orchestrates the complete data pipeline for "Nu", from the
+ingestion of files in Google Cloud Storage (GCS) to data transformation in
+Snowflake using dbt.
+
+Pipeline Flow (E-L-T):
+1.  Wait for Data (Sensor): A sensor monitors a GCS bucket for the arrival
+    of new data files.
+2.  Extract & Load (Refresh External Tables): Once data is detected, commands
+    are triggered in Snowflake to refresh the External Tables. These tables point
+    directly to the files in GCS. This process is parallelized, prioritizing
+    high-frequency data.
+3.  Critical Data Validation: A post-refresh validation step ensures that the
+    external tables have been updated correctly. This is a critical gatekeeper
+    to prevent the propagation of stale data or running transformations on
+    incomplete datasets. The DAG will fail if high-frequency tables have not
+    been recently updated.
+4.  Transform (dbt): With the raw data validated and updated in Snowflake,
+    a dbt project (managed by Cosmos) is executed to perform all transformations,
+    creating analytical models, fact, and dimension tables.
+5.  Completion: A final task marks the successful completion of the pipeline.
+"""
+
+# =============================================================================
+# IMPORTS
+# =============================================================================
 import logging
 from datetime import datetime, timedelta
-from airflow import DAG
-from airflow.providers.google.cloud.sensors.gcs import GCSObjectsWithPrefixExistenceSensor
-from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
+
+# Airflow Providers
+from airflow.decorators import dag
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
+from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
+from airflow.providers.google.cloud.sensors.gcs import GCSObjectsWithPrefixExistenceSensor
 from airflow.utils.task_group import TaskGroup
-from cosmos import DbtTaskGroup, ProjectConfig, ProfileConfig, ExecutionConfig
+
+# Astronomer Cosmos for dbt integration
+from cosmos import DbtTaskGroup, ExecutionConfig, ProfileConfig, ProjectConfig
 from cosmos.profiles import SnowflakeUserPasswordProfileMapping
 
-# Configuración de tablas externas por frecuencia de actualización
+# =============================================================================
+# CONSTANTS & CONFIGURATION
+# =============================================================================
+
+# --- General Configuration ---
+GCP_CONN_ID = "gcp_default"
+SNOWFLAKE_CONN_ID = "snowflake_conn"
+GCS_BUCKET_NAME = "nu_dataset"
+GCS_DATA_PREFIX = "Tables/"
+
+# --- DAG Configuration ---
+DAG_OWNER = "data_team"
+DAG_EMAIL_ON_FAILURE = True
+
+# --- Snowflake Configuration ---
+SNOWFLAKE_DB = "NU_DB"
+SNOWFLAKE_RAW_SCHEMA = "NU_RAW_SCHEMA"
+SNOWFLAKE_ANALYTICS_SCHEMA = "NU_ANALYTIC_SCHEMA"
+SNOWFLAKE_WAREHOUSE = "NU_WH"
+SNOWFLAKE_ROLE = "NU_ROLE"
+
+# --- dbt Configuration ---
+DBT_PROJECT_PATH = "/usr/local/airflow/dags/dbt_pipeline"
+DBT_EXECUTABLE_PATH = "/usr/local/airflow/dbt_venv/bin/dbt"
+
+# --- External Tables Configuration by Update Frequency ---
+# This configuration centralizes the refresh and validation logic.
+# Adding or moving a table between categories will automatically adjust the DAG's behavior.
 EXTERNAL_TABLES_CONFIG = {
-    # Tiempo real/alta frecuencia - Se actualizan constantemente
-    "high_frequency": [
-        "pix_movements", 
-        "transfer_ins", 
-        "transfer_outs"
-    ],
-    
-    # Frecuencia media - Cambios diarios/semanales
-    "medium_frequency": [
-        "accounts", 
-        "customers"
-    ],
-    
-    # Baja frecuencia - Cambios ocasionales o datos estáticos
+    # Real-time/high frequency - Constantly updated. Business-critical.
+    "high_frequency": ["pix_movements", "transfer_ins", "transfer_outs"],
+    # Medium frequency - Daily/weekly changes. Important but less urgent.
+    "medium_frequency": ["accounts", "customers"],
+    # Low frequency - Static or rarely changing data.
     "low_frequency": [
-        "city", 
-        "country", 
-        "state",
-        "d_time", 
-        "d_month", 
-        "d_week", 
-        "d_weekday", 
-        "d_year"
-    ]
+        "city", "country", "state", "d_time", "d_month", "d_week", "d_weekday", "d_year"
+    ],
 }
 
-# Configuración
+# --- Airflow Default Arguments ---
 default_args = {
-    "owner": "data_team",
+    "owner": DAG_OWNER,
     "depends_on_past": False,
-    "email_on_failure": True,
+    "email_on_failure": DAG_EMAIL_ON_FAILURE,
     "email_on_retry": False,
     "retries": 2,
     "retry_delay": timedelta(minutes=5),
 }
 
-# Profile config para Snowflake
+# --- Cosmos Profile Configuration for Snowflake ---
+# Defines how Cosmos will connect to Snowflake to run dbt jobs.
 profile_config = ProfileConfig(
     profile_name="default",
     target_name="dev",
     profile_mapping=SnowflakeUserPasswordProfileMapping(
-        conn_id="snowflake_conn", 
+        conn_id=SNOWFLAKE_CONN_ID,
         profile_args={
-            "database": "NU_DB", 
-            "schema": "NU_ANALYTIC_SCHEMA",
-            "warehouse": "NU_WH",
-            "role": "NU_ROLE"
+            "database": SNOWFLAKE_DB,
+            "schema": SNOWFLAKE_ANALYTICS_SCHEMA,
+            "warehouse": SNOWFLAKE_WAREHOUSE,
+            "role": SNOWFLAKE_ROLE,
         },
-    )
+    ),
 )
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
 
 def validate_external_table_refresh(**context):
     """
-    Validar que las external tables se refrescaron correctamente.
-    
-    Esta validación es CRÍTICA porque:
-    1. External tables pueden fallar silenciosamente (sin error visible)
-    2. Los datos downstream (dbt) dependen de estos datos siendo actuales
-    3. Un refresh fallido puede propagar datos obsoletos a toda la pipeline
-    4. Detecta problemas de conectividad con el storage (GCS)
-    
-    Validación diferenciada por frecuencia:
-    - High/Medium frequency: Verificar refresh reciente
-    - Low frequency: Solo verificar existencia de datos
+    Validates the state of external tables in Snowflake after a refresh attempt.
+
+    This validation is a critical data quality gatekeeper for several reasons:
+    1.  **Detects Silent Failures:** The `ALTER EXTERNAL TABLE REFRESH` command
+        can "succeed" without error even if the underlying data in GCS is
+        inaccessible (e.g., due to permissions changes), leading to stale data.
+    2.  **Prevents Stale Data Propagation:** Ensures that downstream dbt models
+        are built on fresh data, preventing incorrect analytics and reporting.
+    3.  **Differentiated Logic:** Applies validation rules based on data criticality:
+        -   **High/Medium Frequency:** Verifies that the `last_altered` timestamp in
+            the information schema is recent. A failure to refresh a high-frequency
+            table is a critical error and fails the DAG.
+        -   **Low Frequency:** Verifies only that the tables contain data (are not
+            empty), as they are not expected to change with every run.
+
+    Args:
+        context (dict): The Airflow task context, automatically injected.
+
+    Returns:
+        str: A summary message indicating the successful result of the validation.
+
+    Raises:
+        ValueError: If any of the `high_frequency` tables have not been refreshed
+                    within the defined time threshold, halting the pipeline to
+                    prevent processing of stale, critical data.
     """
     from airflow.providers.snowflake.hooks.snowflake import SnowflakeHook
-    
-    logger = logging.getLogger(__name__)
-    hook = SnowflakeHook(snowflake_conn_id="snowflake_conn")
-    
-    validation_results = {}
-    all_validation_errors = []
-    
-    # Validar cada categoría según su frecuencia
-    for category, tables in EXTERNAL_TABLES_CONFIG.items():
-        logger.info(f"Validando categoría: {category} ({len(tables)} tablas)")
-        
-        if category in ["high_frequency", "medium_frequency"]:
-            # Para tablas que deben refrescarse: validar timestamp
-            threshold = "4 HOURS" if category == "high_frequency" else "1 DAY"
-            
-            metadata_sql = f"""
-            SELECT table_name, last_altered
-            FROM information_schema.tables 
-            WHERE table_schema = 'NU_RAW_SCHEMA'
-            AND table_type = 'EXTERNAL TABLE'
-            AND table_name IN ({', '.join([f"'{t.upper()}'" for t in tables])})
-            AND last_altered > CURRENT_TIMESTAMP - INTERVAL '{threshold}'
-            ORDER BY last_altered DESC
-            """
-            
-            refreshed_tables = hook.get_records(metadata_sql)
-            refreshed_names = [row[0].lower() for row in refreshed_tables]
-            missing_refresh = set(tables) - set(refreshed_names)
-            
-            if missing_refresh:
-                error_msg = f"Tablas {category} sin refresh reciente (>{threshold}): {missing_refresh}"
-                logger.error(f"{error_msg}")
-                if category == "high_frequency":
-                    # High frequency es crítico
-                    all_validation_errors.append(f"CRÍTICO: {error_msg}")
-                else:
-                    # Medium frequency es warning
-                    logger.warning(f"WARNING: {error_msg}")
-            else:
-                logger.info(f"Todas las tablas {category} refrescadas recientemente")
-            
-            validation_results[category] = {
-                "refreshed": len(refreshed_names),
-                "missing": len(missing_refresh),
-                "missing_tables": list(missing_refresh)
-            }
-            
-        else:  # low_frequency
-            # Para tablas estáticas: solo verificar que tengan datos
-            data_validation_queries = []
-            for table in tables:
-                data_validation_queries.append(
-                    f"SELECT '{table}' AS table_name, COUNT(*) AS record_count "
-                    f"FROM NU_DB.NU_RAW_SCHEMA.{table}"
-                )
-            
-            data_validation_sql = " UNION ALL ".join(data_validation_queries)
-            data_results = hook.get_records(data_validation_sql)
-            
-            empty_tables = [row[0] for row in data_results if row[1] == 0]
-            tables_with_data = [row[0] for row in data_results if row[1] > 0]
-            
-            if empty_tables: 
-                logger.warning(f"Tablas {category} vacías (puede ser normal): {empty_tables}")
-            else:
-                logger.info(f"Todas las tablas {category} tienen datos")
-            
-            validation_results[category] = {
-                "with_data": len(tables_with_data),
-                "empty": len(empty_tables),
-                "empty_tables": empty_tables
-            }
-    
-    # Logging resumen
-    logger.info("Resumen de validación:")
-    for category, results in validation_results.items():
-        if category in ["high_frequency", "medium_frequency"]:
-            logger.info(f"  {category}: {results['refreshed']} refrescadas, {results['missing']} faltantes")
-        else:
-            logger.info(f"  {category}: {results['with_data']} con datos, {results['empty']} vacías")
-    
-    # Fallar solo si hay errores críticos
-    if all_validation_errors:
-        raise ValueError(f"Validación crítica falló: {'; '.join(all_validation_errors)}")
-    
-    # Métricas para XCom
-    context['ti'].xcom_push(key='validation_results', value=validation_results)
-    context['ti'].xcom_push(key='critical_errors', value=len(all_validation_errors))
-    
-    return f"Validación exitosa por frecuencias"
 
-# DAG principal
-with DAG(
+    logger = logging.getLogger(__name__)
+    hook = SnowflakeHook(snowflake_conn_id=SNOWFLAKE_CONN_ID)
+
+    validation_summary = {}
+    critical_errors = []
+
+    # Validate high and medium frequency tables by `last_altered` timestamp
+    for category, threshold in [("high_frequency", "4 HOURS"), ("medium_frequency", "1 DAY")]:
+        tables = EXTERNAL_TABLES_CONFIG.get(category)
+        if not tables:
+            continue
+
+        logger.info(f"Validating {len(tables)} '{category}' tables with a {threshold} threshold.")
+
+        # Use parameter binding for security and correctness
+        placeholders = ", ".join(["%s"] * len(tables))
+        sql = f"""
+            SELECT table_name
+            FROM {SNOWFLAKE_DB}.information_schema.tables
+            WHERE table_schema = %s
+              AND table_type = 'EXTERNAL TABLE'
+              AND table_name IN ({placeholders})
+              AND last_altered > CURRENT_TIMESTAMP - INTERVAL '{threshold}';
+        """
+        params = [SNOWFLAKE_RAW_SCHEMA.upper()] + [t.upper() for t in tables]
+
+        refreshed_tables_rows = hook.get_records(sql, parameters=params)
+        refreshed_names = {row[0].lower() for row in refreshed_tables_rows}
+        expected_names = set(tables)
+        missing_refresh = expected_names - refreshed_names
+
+        if missing_refresh:
+            error_msg = f"'{category}' tables not recently refreshed (> {threshold}): {sorted(list(missing_refresh))}"
+            if category == "high_frequency":
+                logger.error(f"CRITICAL: {error_msg}")
+                critical_errors.append(error_msg)
+            else:
+                logger.warning(f"WARNING: {error_msg}")
+        else:
+            logger.info(f"All '{category}' tables were recently refreshed.")
+
+        validation_summary[category] = {
+            "refreshed_count": len(refreshed_names),
+            "missing_count": len(missing_refresh),
+            "missing_tables": sorted(list(missing_refresh)),
+        }
+
+    # Validate low frequency tables for data existence (non-empty)
+    low_freq_tables = EXTERNAL_TABLES_CONFIG.get("low_frequency")
+    if low_freq_tables:
+        logger.info(f"Validating {len(low_freq_tables)} 'low_frequency' tables for data existence.")
+        union_queries = [
+            f"SELECT '{table}' AS table_name, COUNT(*) AS record_count FROM {SNOWFLAKE_DB}.{SNOWFLAKE_RAW_SCHEMA}.{table}"
+            for table in low_freq_tables
+        ]
+        sql = " UNION ALL ".join(union_queries)
+
+        data_results = hook.get_records(sql)
+        empty_tables = {row[0] for row in data_results if row[1] == 0}
+        tables_with_data = set(low_freq_tables) - empty_tables
+
+        if empty_tables:
+            logger.warning(f"'low_frequency' tables found empty (this may be expected): {sorted(list(empty_tables))}")
+        else:
+            logger.info("All 'low_frequency' tables contain data.")
+
+        validation_summary["low_frequency"] = {
+            "with_data_count": len(tables_with_data),
+            "empty_count": len(empty_tables),
+            "empty_tables": sorted(list(empty_tables)),
+        }
+
+    logger.info(f"--- Validation Summary --- \n{validation_summary}")
+    context["ti"].xcom_push(key="validation_summary", value=validation_summary)
+
+    if critical_errors:
+        raise ValueError(f"Critical validation failed: {'; '.join(critical_errors)}")
+
+    return "External table validation completed successfully."
+
+
+# =============================================================================
+# DAG DEFINITION
+# =============================================================================
+
+@dag(
     dag_id="nu_data_pipeline",
     default_args=default_args,
-    description="Pipeline Nu GCS → Snowflake → dbt",
-    schedule=None,
+    description="Data pipeline from GCS to Snowflake with dbt transformations.",
+    schedule=None,  # This DAG is event-driven or manually triggered
+    start_date=datetime(2023, 1, 1),
     catchup=False,
     tags=["nu", "gcs", "snowflake", "dbt", "production"],
-    max_active_runs=1,  # Evitar ejecuciones concurrentes
-) as dag:
-    
-    # Sensor para detectar nuevos datos en GCS
+    max_active_runs=1,  # Prevent concurrent runs to maintain data consistency
+)
+def nu_data_pipeline():
+    """
+    Defines and orchestrates the tasks for the Nu data pipeline.
+    """
+
+    # Task 1: Wait for new file(s) in the GCS bucket
     wait_for_new_data = GCSObjectsWithPrefixExistenceSensor(
-        task_id="wait_for_new_data",
-        bucket="nu_dataset",
-        prefix="Tables/",  # Busca cualquier archivo en Tables/
-        google_cloud_conn_id="gcp_default",
-        timeout=300,
-        poke_interval=60,
-        mode="poke"
+        task_id="wait_for_new_data_in_gcs",
+        bucket=GCS_BUCKET_NAME,
+        prefix=GCS_DATA_PREFIX,
+        google_cloud_conn_id=GCP_CONN_ID,
+        timeout=300,        # Max time to wait (in seconds)
+        poke_interval=60,   # How often to check (in seconds)
+        mode="poke",
     )
-    
-    # TaskGroup para refresh de External Tables con mejor control
-    with TaskGroup(group_id="refresh_external_tables") as refresh_group:
+
+    # Task 2: TaskGroup to refresh and validate all external tables
+    with TaskGroup(group_id="refresh_and_validate_external_tables") as refresh_and_validate_group:
         
-        refresh_tasks = []
-        
-        # Crear tasks separados por categoría para mejor paralelización
+        # Create a dictionary to hold lists of task objects for each category
+        refresh_tasks_by_cat = {cat: [] for cat in EXTERNAL_TABLES_CONFIG}
+
+        # Create one refresh task PER TABLE for security, granularity, and observability
         for category, tables in EXTERNAL_TABLES_CONFIG.items():
-            
-            # SQL simplificado para refrescar tablas de la categoría
-            refresh_statements = []
             for table in tables:
-                # Validar que el nombre de tabla solo contiene caracteres seguros
-                if not table.replace('_', '').replace('-', '').isalnum():
-                    raise ValueError(f"Nombre de tabla inseguro: {table}")
-                refresh_statements.append(f"ALTER EXTERNAL TABLE NU_DB.NU_RAW_SCHEMA.{table} REFRESH;")
-            
-            refresh_sql = "\n".join(refresh_statements)
-            
-            refresh_task = SQLExecuteQueryOperator(
-                task_id=f"refresh_{category}_tables",
-                conn_id="snowflake_conn",
-                sql=refresh_sql,
-                autocommit=True,
-                split_statements=True  # Permitir múltiples statements
-            )
-            
-            refresh_tasks.append(refresh_task)
-        
-        # Validación post-refresh
-        validate_refresh = PythonOperator(
-            task_id="validate_refresh",
-            python_callable=validate_external_table_refresh
+                # Sanity check on table names during DAG parsing
+                if not table.replace("_", "").isalnum():
+                    raise ValueError(f"Invalid table name '{table}'. Only alphanumeric and underscores are allowed.")
+
+                refresh_task = SQLExecuteQueryOperator(
+                    task_id=f"refresh_{table}",
+                    conn_id=SNOWFLAKE_CONN_ID,
+                    sql=f"ALTER EXTERNAL TABLE {SNOWFLAKE_DB}.{SNOWFLAKE_RAW_SCHEMA}.{table} REFRESH;",
+                    autocommit=True,
+                )
+                refresh_tasks_by_cat[category].append(refresh_task)
+
+        # This validation task runs after all refresh tasks are complete
+        validate_refresh_status = PythonOperator(
+            task_id="validate_refresh_status",
+            python_callable=validate_external_table_refresh,
         )
-        
-        # Dependencias: high_frequency primero, luego medium y low en paralelo
-        high_freq_task = None
-        other_tasks = []
-        
-        for i, (category, _) in enumerate(EXTERNAL_TABLES_CONFIG.items()):
-            if category == "high_frequency":
-                high_freq_task = refresh_tasks[i]
+
+        # --- Define explicit dependencies within the group ---
+        # 1. High-frequency tasks run first.
+        # 2. Once all high-frequency tasks succeed, medium and low-frequency tasks run in parallel.
+        # 3. After all refresh tasks are done, run the final validation.
+        if refresh_tasks_by_cat["high_frequency"]:
+            high_freq_tasks = refresh_tasks_by_cat["high_frequency"]
+            medium_low_freq_tasks = refresh_tasks_by_cat["medium_frequency"] + refresh_tasks_by_cat["low_frequency"]
+            
+            if medium_low_freq_tasks:
+                high_freq_tasks >> medium_low_freq_tasks >> validate_refresh_status
             else:
-                other_tasks.append(refresh_tasks[i])
-        
-        # Ejecutar high frequency primero, luego el resto en paralelo
-        if high_freq_task:
-            high_freq_task >> validate_refresh
-        if other_tasks:
-            other_tasks >> validate_refresh
-    
-    # Checkpoint mejorado con métricas por frecuencia
-    def log_pipeline_ready(**context):
-        validation_results = context['ti'].xcom_pull(key='validation_results', task_ids='refresh_external_tables.validate_refresh')
-        logging.getLogger(__name__).info(f"Pipeline ready! Validation results: {validation_results}")
-        return "Pipeline ready"
-    
-    data_ready_checkpoint = PythonOperator(
-        task_id="data_ready_checkpoint",
-        python_callable=log_pipeline_ready
-    )
-    
-    # dbt Task Group con configuración mejorada
+                high_freq_tasks >> validate_refresh_status
+
+
+    # Task 3: TaskGroup to run the dbt project using Cosmos
     dbt_transformation = DbtTaskGroup(
         group_id="dbt_transformation",
-        project_config=ProjectConfig("/usr/local/airflow/dags/dbt_pipeline"),
+        project_config=ProjectConfig(DBT_PROJECT_PATH),
         profile_config=profile_config,
-        execution_config=ExecutionConfig(
-            dbt_executable_path="/usr/local/airflow/dbt_venv/bin/dbt"
-        ),
+        execution_config=ExecutionConfig(dbt_executable_path=DBT_EXECUTABLE_PATH),
         operator_args={
-            "install_deps": True,
-            "full_refresh": False,  # Para producción, evitar full refresh por defecto
-        }
+            "install_deps": True,   # Ensures dbt dependencies are installed
+            "full_refresh": False,  # Prefer incremental runs in production by default
+        },
     )
-    
-    # Notificación final (opcional)
+
+    # Task 4: Final endpoint to signify a successful pipeline run
     pipeline_success = EmptyOperator(
         task_id="pipeline_success",
-        trigger_rule="all_success"
+        trigger_rule="all_success",
     )
-    
-    # Pipeline dependencies mejoradas
-    wait_for_new_data >> refresh_group >> data_ready_checkpoint >> dbt_transformation >> pipeline_success
+
+    # =============================================================================
+    # PIPELINE ORCHESTRATION
+    # =============================================================================
+    wait_for_new_data >> refresh_and_validate_group >> dbt_transformation >> pipeline_success
+
+# Instantiate the DAG
+nu_data_pipeline()
